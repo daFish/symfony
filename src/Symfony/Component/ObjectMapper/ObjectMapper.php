@@ -167,6 +167,65 @@ final class ObjectMapper implements ObjectMapperInterface, ObjectMapperAwareInte
                 $value = $this->getSourceValue($source, $mappedTarget, $this->getRawValue($source, $propertyName), $objectMap);
                 $this->storeValue($propertyName, $mapToProperties, $ctorArguments, $value);
             }
+
+            if (!$mappings && !$targetRefl->hasProperty($propertyName)) {
+                $sourceProperty = $refl->getProperty($propertyName);
+                if ($refl->isInstance($source) && !$sourceProperty->isInitialized($source)) {
+                    continue;
+                }
+
+                try {
+                    $value = $this->getRawValue($source, $propertyName);
+                } catch (NoSuchPropertyException) {
+                    continue;
+                }
+
+                if (!\is_object($value)) {
+                    continue;
+                }
+
+                try {
+                    $nestedRefl = new \ReflectionClass($value);
+                } catch (\ReflectionException) {
+                    continue;
+                }
+
+                foreach ($nestedRefl->getProperties() as $nestedProperty) {
+                    if ($nestedProperty->isStatic()) {
+                        continue;
+                    }
+
+                    $nestedPropertyName = $nestedProperty->getName();
+                    $nestedMappings = $this->metadataFactory->create($value, $nestedPropertyName);
+
+                    foreach ($nestedMappings as $nestedMapping) {
+                        $nestedTargetPropertyName = $nestedMapping->target ?? $nestedPropertyName;
+
+                        if (!$targetRefl->hasProperty($nestedTargetPropertyName)) {
+                            continue;
+                        }
+
+                        if (false === $nestedMapping->if) {
+                            continue;
+                        }
+
+                        if (!$nestedProperty->isInitialized($value)) {
+                            continue;
+                        }
+
+                        $nestedValue = $this->getRawValue($value, $nestedPropertyName);
+
+                        if ($nestedMapping->if && ($fn = $this->getCallable($nestedMapping->if, $this->conditionCallableLocator))) {
+                            if (!$this->call($fn, $nestedValue, $source, $mappedTarget)) {
+                                continue;
+                            }
+                        }
+
+                        $nestedValue = $this->getSourceValue($value, $mappedTarget, $nestedValue, $objectMap, $nestedMapping);
+                        $this->storeValue($nestedTargetPropertyName, $mapToProperties, $ctorArguments, $nestedValue);
+                    }
+                }
+            }
         }
 
         if ((!$mappingToObject || !$rootCall) && !$map?->transform && $targetConstructor) {
